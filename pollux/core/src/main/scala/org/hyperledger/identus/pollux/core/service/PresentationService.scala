@@ -26,6 +26,7 @@ trait PresentationService {
       connectionId: Option[String],
       proofTypes: Seq[ProofType],
       options: Option[org.hyperledger.identus.pollux.core.model.presentation.Options],
+      presentationFormat: PresentCredentialRequestFormat,
       goalCode: Option[String],
       goal: Option[String],
       expirationDuration: Option[Duration],
@@ -39,6 +40,7 @@ trait PresentationService {
       proofTypes: Seq[ProofType],
       claimsToDisclose: ast.Json.Obj,
       options: Option[org.hyperledger.identus.pollux.core.model.presentation.Options],
+      presentationFormat: PresentCredentialRequestFormat,
       goalCode: Option[String],
       goal: Option[String],
       expirationDuration: Option[Duration],
@@ -50,6 +52,7 @@ trait PresentationService {
       thid: DidCommID,
       connectionId: Option[String],
       presentationRequest: AnoncredPresentationRequestV1,
+      presentationFormat: PresentCredentialRequestFormat,
       goalCode: Option[String],
       goal: Option[String],
       expirationDuration: Option[Duration],
@@ -102,7 +105,7 @@ trait PresentationService {
 
   def findPresentationRecord(
       recordId: DidCommID
-  ): ZIO[WalletAccessContext, PresentationError, Option[PresentationRecord]]
+  ): URIO[WalletAccessContext, Option[PresentationRecord]]
 
   def findPresentationRecordByThreadId(
       thid: DidCommID

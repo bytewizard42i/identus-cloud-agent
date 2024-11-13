@@ -1,13 +1,12 @@
 package org.hyperledger.identus.agent.server
 
 import com.nimbusds.jose.crypto.bc.BouncyCastleProviderSingleton
-import io.micrometer.prometheus.{PrometheusConfig, PrometheusMeterRegistry}
+import io.micrometer.prometheusmetrics.{PrometheusConfig, PrometheusMeterRegistry}
 import org.hyperledger.identus.agent.server.config.AppConfig
 import org.hyperledger.identus.agent.server.http.ZioHttpClient
 import org.hyperledger.identus.agent.server.sql.Migrations as AgentMigrations
 import org.hyperledger.identus.agent.walletapi.service.{
   EntityServiceImpl,
-  ManagedDIDService,
   ManagedDIDServiceWithEventNotificationImpl,
   WalletManagementServiceImpl
 }
@@ -16,8 +15,12 @@ import org.hyperledger.identus.agent.walletapi.sql.{
   JdbcEntityRepository,
   JdbcWalletNonSecretStorage
 }
-import org.hyperledger.identus.agent.walletapi.storage.GenericSecretStorage
 import org.hyperledger.identus.castor.controller.{DIDControllerImpl, DIDRegistrarControllerImpl}
+import org.hyperledger.identus.castor.core.model.did.{
+  Service as DidDocumentService,
+  ServiceEndpoint as DidDocumentServiceEndpoint,
+  ServiceType as DidDocumentServiceType
+}
 import org.hyperledger.identus.castor.core.service.DIDServiceImpl
 import org.hyperledger.identus.castor.core.util.DIDOperationValidator
 import org.hyperledger.identus.connect.controller.ConnectionControllerImpl
@@ -31,7 +34,7 @@ import org.hyperledger.identus.iam.authentication.{DefaultAuthenticator, Oid4vci
 import org.hyperledger.identus.iam.authentication.apikey.JdbcAuthenticationRepository
 import org.hyperledger.identus.iam.authorization.core.EntityPermissionManagementService
 import org.hyperledger.identus.iam.authorization.DefaultPermissionManagementService
-import org.hyperledger.identus.iam.entity.http.controller.{EntityController, EntityControllerImpl}
+import org.hyperledger.identus.iam.entity.http.controller.EntityControllerImpl
 import org.hyperledger.identus.iam.wallet.http.controller.WalletManagementControllerImpl
 import org.hyperledger.identus.issue.controller.IssueControllerImpl
 import org.hyperledger.identus.mercury.*
@@ -42,22 +45,27 @@ import org.hyperledger.identus.pollux.core.service.*
 import org.hyperledger.identus.pollux.core.service.verification.VcVerificationServiceImpl
 import org.hyperledger.identus.pollux.credentialdefinition.controller.CredentialDefinitionControllerImpl
 import org.hyperledger.identus.pollux.credentialschema.controller.{
-  CredentialSchemaController,
   CredentialSchemaControllerImpl,
   VerificationPolicyControllerImpl
 }
+import org.hyperledger.identus.pollux.prex.controller.PresentationExchangeControllerImpl
+import org.hyperledger.identus.pollux.prex.PresentationDefinitionValidatorImpl
 import org.hyperledger.identus.pollux.sql.repository.{
   JdbcCredentialDefinitionRepository,
   JdbcCredentialRepository,
   JdbcCredentialSchemaRepository,
   JdbcCredentialStatusListRepository,
   JdbcOID4VCIIssuerMetadataRepository,
+  JdbcPresentationExchangeRepository,
   JdbcPresentationRepository,
   JdbcVerificationPolicyRepository,
   Migrations as PolluxMigrations
 }
 import org.hyperledger.identus.presentproof.controller.PresentProofControllerImpl
 import org.hyperledger.identus.resolvers.DIDResolver
+import org.hyperledger.identus.shared.messaging
+import org.hyperledger.identus.shared.messaging.WalletIdAndRecordId
+import org.hyperledger.identus.shared.models.WalletId
 import org.hyperledger.identus.system.controller.SystemControllerImpl
 import org.hyperledger.identus.verification.controller.VcVerificationControllerImpl
 import zio.*
@@ -69,6 +77,7 @@ import zio.metrics.connectors.micrometer.MicrometerConfig
 import zio.metrics.jvm.DefaultJvmMetrics
 
 import java.security.Security
+import java.util.UUID
 
 object MainApp extends ZIOAppDefault {
 
@@ -139,9 +148,26 @@ object MainApp extends ZIOAppDefault {
       |""".stripMargin)
         .ignore
 
+      appConfig <- ZIO.service[AppConfig].provide(SystemModule.configLayer)
+      // these services are added to any DID document by default when they are created.
+      defaultDidDocumentServices = Set(
+        DidDocumentService(
+          id = appConfig.agent.httpEndpoint.serviceName,
+          serviceEndpoint = DidDocumentServiceEndpoint
+            .Single(
+              DidDocumentServiceEndpoint.UriOrJsonEndpoint
+                .Uri(
+                  DidDocumentServiceEndpoint.UriValue
+                    .fromString(appConfig.agent.httpEndpoint.publicEndpointUrl.toString)
+                    .toOption
+                    .get // This will fail if URL is invalid, which will prevent app from starting since public endpoint in config is invalid
+                )
+            ),
+          `type` = DidDocumentServiceType.Single(DidDocumentServiceType.Name.fromStringUnsafe("LinkedResourceV1"))
+        )
+      )
       _ <- preMigrations
       _ <- migrations
-
       app <- CloudAgentApp.run
         .provide(
           DidCommX.liveLayer,
@@ -169,12 +195,14 @@ object MainApp extends ZIOAppDefault {
           WalletManagementControllerImpl.layer,
           EventControllerImpl.layer,
           DIDCommControllerImpl.layer,
+          PresentationExchangeControllerImpl.layer,
           // domain
           AppModule.apolloLayer,
           AppModule.didJwtResolverLayer,
           DIDOperationValidator.layer(),
           DIDResolver.layer,
-          HttpURIDereferencerImpl.layer,
+          GenericUriResolverImpl.layer,
+          PresentationDefinitionValidatorImpl.layer,
           // service
           ConnectionServiceImpl.layer >>> ConnectionServiceNotifier.layer,
           CredentialSchemaServiceImpl.layer,
@@ -183,11 +211,12 @@ object MainApp extends ZIOAppDefault {
           LinkSecretServiceImpl.layer >>> CredentialServiceImpl.layer >>> CredentialServiceNotifier.layer,
           DIDServiceImpl.layer,
           EntityServiceImpl.layer,
-          ManagedDIDServiceWithEventNotificationImpl.layer,
+          ZLayer.succeed(defaultDidDocumentServices) >>> ManagedDIDServiceWithEventNotificationImpl.layer,
           LinkSecretServiceImpl.layer >>> PresentationServiceImpl.layer >>> PresentationServiceNotifier.layer,
           VerificationPolicyServiceImpl.layer,
           WalletManagementServiceImpl.layer,
           VcVerificationServiceImpl.layer,
+          PresentationExchangeServiceImpl.layer,
           // authentication
           AppModule.builtInAuthenticatorLayer,
           AppModule.keycloakAuthenticatorLayer,
@@ -211,6 +240,7 @@ object MainApp extends ZIOAppDefault {
           RepoModule.polluxContextAwareTransactorLayer ++ RepoModule.polluxTransactorLayer >>> JdbcCredentialDefinitionRepository.layer,
           RepoModule.polluxContextAwareTransactorLayer ++ RepoModule.polluxTransactorLayer >>> JdbcPresentationRepository.layer,
           RepoModule.polluxContextAwareTransactorLayer ++ RepoModule.polluxTransactorLayer >>> JdbcOID4VCIIssuerMetadataRepository.layer,
+          RepoModule.polluxContextAwareTransactorLayer ++ RepoModule.polluxTransactorLayer >>> JdbcPresentationExchangeRepository.layer,
           RepoModule.polluxContextAwareTransactorLayer >>> JdbcVerificationPolicyRepository.layer,
           // oidc
           CredentialIssuerControllerImpl.layer,
@@ -222,6 +252,11 @@ object MainApp extends ZIOAppDefault {
           // HTTP client
           SystemModule.zioHttpClientLayer,
           Scope.default,
+          // Messaging Service
+          ZLayer.fromZIO(ZIO.service[AppConfig].map(_.agent.messagingService)),
+          messaging.MessagingService.serviceLayer,
+          messaging.MessagingService.producerLayer[UUID, WalletIdAndRecordId],
+          messaging.MessagingService.producerLayer[WalletId, WalletId]
         )
     } yield app
 

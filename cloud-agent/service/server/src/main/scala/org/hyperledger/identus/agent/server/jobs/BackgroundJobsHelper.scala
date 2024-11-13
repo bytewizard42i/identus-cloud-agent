@@ -19,7 +19,6 @@ import org.hyperledger.identus.mercury.protocol.invitation.v2.Invitation
 import org.hyperledger.identus.pollux.core.model.error.{CredentialServiceError, PresentationError}
 import org.hyperledger.identus.pollux.core.model.DidCommID
 import org.hyperledger.identus.pollux.core.service.CredentialService
-import org.hyperledger.identus.pollux.sdjwt.SDJWT.*
 import org.hyperledger.identus.pollux.vc.jwt.{
   DIDResolutionFailed,
   DIDResolutionSucceeded,
@@ -29,8 +28,11 @@ import org.hyperledger.identus.pollux.vc.jwt.{
   *
 }
 import org.hyperledger.identus.shared.crypto.*
+import org.hyperledger.identus.shared.messaging.ConsumerJobConfig
+import org.hyperledger.identus.shared.messaging.MessagingService.RetryStep
 import org.hyperledger.identus.shared.models.{KeyId, WalletAccessContext}
-import zio.{ZIO, ZLayer}
+import zio.{durationInt, Duration, ZIO, ZLayer}
+import zio.prelude.OrdOps
 
 import java.time.Instant
 import java.util.Base64
@@ -59,9 +61,10 @@ trait BackgroundJobsHelper {
     } yield longFormPrismDID
   }
 
-  def createJwtIssuer(
+  def createJwtVcIssuer(
       jwtIssuerDID: PrismDID,
-      verificationRelationship: VerificationRelationship
+      verificationRelationship: VerificationRelationship,
+      kidIssuer: Option[KeyId],
   ): ZIO[
     DIDService & ManagedDIDService & WalletAccessContext,
     BackgroundJobError | GetManagedDIDError | DIDResolutionError,
@@ -71,19 +74,23 @@ trait BackgroundJobsHelper {
       managedDIDService <- ZIO.service[ManagedDIDService]
       didService <- ZIO.service[DIDService]
       // Automatically infer keyId to use by resolving DID and choose the corresponding VerificationRelationship
-      issuingKeyId <- didService
-        .resolveDID(jwtIssuerDID)
-        .someOrFail(BackgroundJobError.InvalidState(s"Issuing DID resolution result is not found"))
-        .map { case (_, didData) =>
-          didData.publicKeys
-            .find(pk => pk.purpose == verificationRelationship && pk.publicKeyData.crv == EllipticCurve.SECP256K1)
-            .map(_.id)
-        }
-        .someOrFail(
-          BackgroundJobError.InvalidState(
-            s"Issuing DID doesn't have a key in ${verificationRelationship.name} to use: $jwtIssuerDID"
+
+      // FIXME kidIssuer
+      issuingKeyId <-
+        // kidIssuer.orElse
+        didService
+          .resolveDID(jwtIssuerDID)
+          .someOrFail(BackgroundJobError.InvalidState(s"Issuing DID resolution result is not found"))
+          .map { case (_, didData) =>
+            didData.publicKeys
+              .find(pk => pk.purpose == verificationRelationship && pk.publicKeyData.crv == EllipticCurve.SECP256K1)
+              .map(_.id)
+          }
+          .someOrFail(
+            BackgroundJobError.InvalidState(
+              s"Issuing DID doesn't have a key in ${verificationRelationship.name} to use: $jwtIssuerDID"
+            )
           )
-        )
       jwtIssuer <- managedDIDService
         .findDIDKeyPair(jwtIssuerDID.asCanonical, issuingKeyId)
         .flatMap {
@@ -93,9 +100,12 @@ trait BackgroundJobsHelper {
                 .InvalidState(s"Issuer key-pair does not exist in the wallet: ${jwtIssuerDID.toString}#$issuingKeyId")
             )
           case Some(Ed25519KeyPair(publicKey, privateKey)) =>
-            ZIO.fail(
-              BackgroundJobError.InvalidState(
-                s"Issuer key-pair '$issuingKeyId' is of the type Ed25519. It's not supported by this feature in this version"
+            ZIO.succeed(
+              JwtIssuer(
+                jwtIssuerDID.did,
+                // org.hyperledger.identus.castor.core.model.did.DID.fromStringUnsafe(jwtIssuerDID.toString),
+                EdSigner(Ed25519KeyPair(publicKey, privateKey), Some(issuingKeyId)),
+                publicKey.toJava
               )
             )
           case Some(X25519KeyPair(publicKey, privateKey)) =>
@@ -108,7 +118,7 @@ trait BackgroundJobsHelper {
             ZIO.succeed(
               JwtIssuer(
                 jwtIssuerDID.did,
-                ES256KSigner(privateKey.toJavaPrivateKey),
+                ES256KSigner(privateKey.toJavaPrivateKey, Some(issuingKeyId)),
                 publicKey.toJavaPublicKey
               )
             )
@@ -161,7 +171,7 @@ trait BackgroundJobsHelper {
         .map { case (_, didData) =>
           didData.publicKeys
             .find(pk =>
-              pk.id == keyId.value
+              pk.id == keyId
                 && pk.purpose == verificationRelationship && pk.publicKeyData.crv == EllipticCurve.ED25519
             )
             .map(_.id)
@@ -219,6 +229,22 @@ trait BackgroundJobsHelper {
           _ <- ZIO.fail(CredentialServiceError.InvitationExpired(expiryTime))
         } yield ()
       case _ => ZIO.unit
+    }
+  }
+
+  def retryStepsFromConfig(topicName: String, jobConfig: ConsumerJobConfig): Seq[RetryStep] = {
+    val retryTopics = jobConfig.retryStrategy match
+      case None => Seq.empty
+      case Some(rs) =>
+        (1 to rs.maxRetries).map(i =>
+          (
+            s"$topicName-retry-$i",
+            rs.initialDelay.multipliedBy(Math.pow(2, i - 1).toLong).min(rs.maxDelay)
+          )
+        )
+    val topics = retryTopics prepended (topicName, 0.seconds) appended (s"$topicName-DLQ", Duration.Infinity)
+    (0 until topics.size - 1).map { i =>
+      RetryStep(topics(i)._1, jobConfig.consumerCount, topics(i)._2, topics(i + 1)._1)
     }
   }
 }

@@ -3,15 +3,13 @@ package org.hyperledger.identus.agent.server.http
 import io.circe.*
 import io.circe.generic.semiauto.*
 import io.circe.syntax.*
-import io.micrometer.prometheus.PrometheusMeterRegistry
+import io.micrometer.prometheusmetrics.PrometheusMeterRegistry
 import org.http4s.*
 import org.http4s.blaze.server.BlazeServerBuilder
 import org.http4s.server.Router
-import org.hyperledger.identus.api.http.ErrorResponse
 import org.hyperledger.identus.shared.crypto.Sha256Hash
 import org.hyperledger.identus.shared.json.Json
 import org.hyperledger.identus.system.controller.SystemEndpoints
-import sttp.tapir.*
 import sttp.tapir.model.ServerRequest
 import sttp.tapir.server.http4s.ztapir.ZHttp4sServerInterpreter
 import sttp.tapir.server.http4s.Http4sServerOptions
@@ -93,9 +91,9 @@ class ZHttp4sBlazeServer(micrometerRegistry: PrometheusMeterRegistry, metricsNam
     options <- ZIO.attempt {
       Http4sServerOptions
         .customiseInterceptors[Task]
-        .exceptionHandler(CustomServerInterceptors.exceptionHandler)
-        .rejectHandler(CustomServerInterceptors.rejectHandler)
-        .decodeFailureHandler(CustomServerInterceptors.decodeFailureHandler)
+        .exceptionHandler(CustomServerInterceptors.tapirExceptionHandler)
+        .rejectHandler(CustomServerInterceptors.tapirRejectHandler)
+        .decodeFailureHandler(CustomServerInterceptors.tapirDecodeFailureHandler)
         .serverLog(None)
         .metricsInterceptor(
           srv.metricsInterceptor(
@@ -123,6 +121,7 @@ class ZHttp4sBlazeServer(micrometerRegistry: PrometheusMeterRegistry, metricsNam
         ZIO.executor.flatMap(executor =>
           BlazeServerBuilder[Task]
             .withExecutionContext(executor.asExecutionContext)
+            .withServiceErrorHandler(CustomServerInterceptors.http4sServiceErrorHandler)
             .bindHttp(port, "0.0.0.0")
             .withHttpApp(Router("/" -> http4sEndpoints).orNotFound)
             .serve

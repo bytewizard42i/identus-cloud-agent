@@ -1,7 +1,6 @@
 package org.hyperledger.identus.system.controller
 
-import io.micrometer.prometheus.{PrometheusConfig, PrometheusMeterRegistry}
-import org.hyperledger.identus.agent.server.config.AppConfig
+import io.micrometer.prometheusmetrics.{PrometheusConfig, PrometheusMeterRegistry}
 import org.hyperledger.identus.agent.server.http.CustomServerInterceptors
 import org.hyperledger.identus.agent.server.SystemModule.configLayer
 import org.hyperledger.identus.system.controller.http.HealthInfo
@@ -41,9 +40,9 @@ trait SystemControllerTestTools {
 
   def bootstrapOptions[F[_]](monadError: MonadError[F]): CustomiseInterceptors[F, Any] = {
     new CustomiseInterceptors[F, Any](_ => ())
-      .exceptionHandler(CustomServerInterceptors.exceptionHandler)
-      .rejectHandler(CustomServerInterceptors.rejectHandler)
-      .decodeFailureHandler(CustomServerInterceptors.decodeFailureHandler)
+      .exceptionHandler(CustomServerInterceptors.tapirExceptionHandler)
+      .rejectHandler(CustomServerInterceptors.tapirRejectHandler)
+      .decodeFailureHandler(CustomServerInterceptors.tapirDecodeFailureHandler)
   }
 
   def httpBackend(controller: SystemController) = {

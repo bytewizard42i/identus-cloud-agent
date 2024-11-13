@@ -8,6 +8,7 @@ import org.hyperledger.identus.iam.wallet.http.WalletManagementEndpoints
 import org.hyperledger.identus.issue.controller.IssueEndpoints
 import org.hyperledger.identus.pollux.credentialdefinition.CredentialDefinitionRegistryEndpoints
 import org.hyperledger.identus.pollux.credentialschema.{SchemaRegistryEndpoints, VerificationPolicyEndpoints}
+import org.hyperledger.identus.pollux.prex.PresentationExchangeEndpoints
 import org.hyperledger.identus.system.controller.SystemEndpoints
 import sttp.apispec.{SecurityScheme, Tag}
 import sttp.apispec.openapi.*
@@ -54,7 +55,6 @@ object DocModels {
 
   val customiseDocsModel: OpenAPI => OpenAPI = { oapi =>
     oapi
-      .openapi("3.0.3")
       .info(
         Info(
           title = "Identus Cloud Agent API Reference",
@@ -122,7 +122,8 @@ object DocModels {
           WalletManagementEndpoints.tag,
           SystemEndpoints.tag,
           EventEndpoints.tag,
-          EntityEndpoints.tag
+          EntityEndpoints.tag,
+          PresentationExchangeEndpoints.tag
         )
       )
 

@@ -36,12 +36,13 @@ inThisBuild(
     // scalacOptions += "-Yexplicit-nulls",
     // scalacOptions += "-Ysafe-init",
     // scalacOptions +=  "-Werror", // <=> "-Xfatal-warnings"
-    scalacOptions += "-Dquill.macro.log=false", // disable quill macro logs // TODO https://github.com/zio/zio-protoquill/issues/470
+    scalacOptions += "-Dquill.macro.log=false", // disable quill macro logs // TODO https://github.com/zio/zio-protoquill/issues/470,
+    scalacOptions ++= Seq("-Xmax-inlines", "50") // manually increase max-inlines above 32 (https://github.com/circe/circe/issues/2162)
   )
 )
 
 lazy val V = new {
-  val munit = "1.0.1" // "0.7.29"
+  val munit = "1.0.2" // "0.7.29"
   val munitZio = "0.2.0"
 
   // https://mvnrepository.com/artifact/dev.zio/zio
@@ -49,17 +50,18 @@ lazy val V = new {
   val zioConfig = "4.0.2"
   val zioLogging = "2.3.1"
   val zioJson = "0.7.3"
-  val zioHttp = "3.0.0-RC10"
+  val zioHttp = "3.0.1"
   val zioCatsInterop = "3.3.0" // TODO "23.1.0.2" // https://mvnrepository.com/artifact/dev.zio/zio-interop-cats
   val zioMetricsConnector = "2.3.1"
   val zioMock = "1.0.0-RC12"
+  val zioKafka = "2.7.5"
   val mockito = "3.2.18.0"
   val monocle = "3.2.0"
 
   // https://mvnrepository.com/artifact/io.circe/circe-core
   val circe = "0.14.7"
 
-  val tapir = "1.6.4" // scala-steward:off // TODO "1.10.5"
+  val tapir = "1.11.7" // scala-steward:off // TODO "1.10.5"
   val http4sBlaze = "0.23.15" // scala-steward:off  // TODO "0.23.16"
 
   val typesafeConfig = "1.4.3"
@@ -88,7 +90,7 @@ lazy val V = new {
   // [error] 	org.hyperledger.identus.pollux.core.model.schema.CredentialSchemaSpec
 
   val vaultDriver = "6.2.0"
-  val micrometer = "1.11.11"
+  val micrometer = "1.13.6"
 
   val nimbusJwt = "9.37.3"
   val keycloak = "23.0.7" // scala-steward:off //TODO 24.0.3 // update all quay.io/keycloak/keycloak
@@ -102,13 +104,20 @@ lazy val D = new {
   val zioLog: ModuleID = "dev.zio" %% "zio-logging" % V.zioLogging
   val zioSLF4J: ModuleID = "dev.zio" %% "zio-logging-slf4j" % V.zioLogging
   val zioJson: ModuleID = "dev.zio" %% "zio-json" % V.zioJson
+  val zioConcurrent: ModuleID = "dev.zio" %% "zio-concurrent" % V.zio
   val zioHttp: ModuleID = "dev.zio" %% "zio-http" % V.zioHttp
+  val zioKafka: ModuleID = "dev.zio" %% "zio-kafka" % V.zioKafka excludeAll (
+    ExclusionRule("dev.zio", "zio_3"), ExclusionRule("dev.zio", "zio-streams_3")
+  )
   val zioCatsInterop: ModuleID = "dev.zio" %% "zio-interop-cats" % V.zioCatsInterop
   val zioMetricsConnectorMicrometer: ModuleID = "dev.zio" %% "zio-metrics-connectors-micrometer" % V.zioMetricsConnector
   val tapirPrometheusMetrics: ModuleID = "com.softwaremill.sttp.tapir" %% "tapir-prometheus-metrics" % V.tapir
   val micrometer: ModuleID = "io.micrometer" % "micrometer-registry-prometheus" % V.micrometer
   val micrometerPrometheusRegistry = "io.micrometer" % "micrometer-core" % V.micrometer
-  val scalaUri = "io.lemonlabs" %% "scala-uri" % V.scalaUri
+  val scalaUri = Seq(
+    "io.lemonlabs" %% "scala-uri" % V.scalaUri exclude ("org.typelevel", "cats-parse_3"), // Exclude cats-parse to avoid deps conflict
+    "org.typelevel" % "cats-parse_3" % "1.0.0", // Replace with version 1.0.0
+  )
 
   val zioConfig: ModuleID = "dev.zio" %% "zio-config" % V.zioConfig
   val zioConfigMagnolia: ModuleID = "dev.zio" %% "zio-config-magnolia" % V.zioConfig
@@ -185,14 +194,15 @@ lazy val D_Shared = new {
       D.typesafeConfig,
       D.scalaPbGrpc,
       D.zio,
+      D.zioConcurrent,
       D.zioHttp,
-      D.scalaUri,
+      D.zioKafka,
       D.zioPrelude,
       // FIXME: split shared DB stuff as subproject?
       D.doobieHikari,
       D.doobiePostgres,
       D.zioCatsInterop,
-    )
+    ) ++ D.scalaUri
 }
 
 lazy val D_SharedJson = new {
@@ -341,12 +351,11 @@ lazy val D_Pollux_VC_JWT = new {
 
 lazy val D_EventNotification = new {
   val zio = "dev.zio" %% "zio" % V.zio
-  val zioConcurrent = "dev.zio" %% "zio-concurrent" % V.zio
   val zioTest = "dev.zio" %% "zio-test" % V.zio % Test
   val zioTestSbt = "dev.zio" %% "zio-test-sbt" % V.zio % Test
   val zioTestMagnolia = "dev.zio" %% "zio-test-magnolia" % V.zio % Test
 
-  val zioDependencies: Seq[ModuleID] = Seq(zio, zioConcurrent, zioTest, zioTestSbt, zioTestMagnolia)
+  val zioDependencies: Seq[ModuleID] = Seq(zio, zioTest, zioTestSbt, zioTestMagnolia)
   val baseDependencies: Seq[ModuleID] = zioDependencies
 }
 
@@ -792,7 +801,7 @@ lazy val polluxCore = project
     polluxAnoncreds,
     polluxVcJWT,
     polluxSDJWT,
-    polluxPreX
+    polluxPreX % "compile->compile;test->test", // Test is for example resources
   )
 
 lazy val polluxDoobie = project

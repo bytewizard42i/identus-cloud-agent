@@ -2,6 +2,7 @@ package org.hyperledger.identus.pollux.core.service
 
 import org.hyperledger.identus.mercury.model.DidId
 import org.hyperledger.identus.mercury.protocol.presentproof.{
+  PresentCredentialRequestFormat,
   Presentation,
   ProofType,
   ProposePresentation,
@@ -15,7 +16,7 @@ import org.hyperledger.identus.pollux.core.service.serdes.{AnoncredCredentialPro
 import org.hyperledger.identus.pollux.sdjwt.{HolderPrivateKey, PresentationCompact}
 import org.hyperledger.identus.pollux.vc.jwt.{Issuer, PresentationPayload, W3cCredentialPayload}
 import org.hyperledger.identus.shared.models.*
-import zio.{mock, Duration, IO, UIO, URLayer, ZIO, ZLayer}
+import zio.{mock, Duration, IO, UIO, URIO, URLayer, ZIO, ZLayer}
 import zio.json.*
 import zio.mock.{Mock, Proxy}
 
@@ -33,6 +34,7 @@ object MockPresentationService extends Mock[PresentationService] {
             Option[String],
             Seq[ProofType],
             Option[Options],
+            PresentCredentialRequestFormat,
             Option[String],
             Option[String],
             Option[Duration]
@@ -50,6 +52,7 @@ object MockPresentationService extends Mock[PresentationService] {
             Seq[ProofType],
             ast.Json.Obj,
             Option[Options],
+            PresentCredentialRequestFormat,
             Option[String],
             Option[String],
             Option[Duration]
@@ -66,6 +69,7 @@ object MockPresentationService extends Mock[PresentationService] {
             DidCommID,
             Option[String],
             AnoncredPresentationRequestV1,
+            PresentCredentialRequestFormat,
             Option[String],
             Option[String],
             Option[Duration]
@@ -129,6 +133,7 @@ object MockPresentationService extends Mock[PresentationService] {
           connectionId: Option[String],
           proofTypes: Seq[ProofType],
           options: Option[Options],
+          presentationFormat: PresentCredentialRequestFormat,
           goalCode: Option[String],
           goal: Option[String],
           expirationTime: Option[Duration]
@@ -142,6 +147,7 @@ object MockPresentationService extends Mock[PresentationService] {
             connectionId,
             proofTypes,
             options,
+            presentationFormat,
             goalCode,
             goal,
             expirationTime
@@ -156,6 +162,7 @@ object MockPresentationService extends Mock[PresentationService] {
           proofTypes: Seq[ProofType],
           claimsToDisclose: ast.Json.Obj,
           options: Option[org.hyperledger.identus.pollux.core.model.presentation.Options],
+          presentationFormat: PresentCredentialRequestFormat,
           goalCode: Option[String],
           goal: Option[String],
           expirationTime: Option[Duration]
@@ -170,6 +177,7 @@ object MockPresentationService extends Mock[PresentationService] {
             proofTypes,
             claimsToDisclose,
             options,
+            presentationFormat,
             goalCode,
             goal,
             expirationTime
@@ -182,6 +190,7 @@ object MockPresentationService extends Mock[PresentationService] {
           thid: DidCommID,
           connectionId: Option[String],
           presentationRequest: AnoncredPresentationRequestV1,
+          presentationFormat: PresentCredentialRequestFormat,
           goalCode: Option[String],
           goal: Option[String],
           expirationTime: Option[Duration]
@@ -194,6 +203,7 @@ object MockPresentationService extends Mock[PresentationService] {
             thid,
             connectionId,
             presentationRequest,
+            presentationFormat,
             goalCode,
             goal,
             expirationTime
@@ -319,7 +329,8 @@ object MockPresentationService extends Mock[PresentationService] {
           state: PresentationRecord.ProtocolState*
       ): IO[PresentationError, Seq[PresentationRecord]] = ???
 
-      override def findPresentationRecord(recordId: DidCommID): IO[PresentationError, Option[PresentationRecord]] = ???
+      override def findPresentationRecord(recordId: DidCommID): URIO[WalletAccessContext, Option[PresentationRecord]] =
+        ???
 
       override def findPresentationRecordByThreadId(
           thid: DidCommID
